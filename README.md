@@ -15,7 +15,7 @@ Native StoreKit 2 subscription SDK for iOS. Handles product loading, purchase, r
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/CyonCode/ios-monetization-kit", from: "0.1.0"),
+    .package(url: "https://github.com/CyonCode/MonetizationKit", from: "0.1.0"),
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["MonetizationKit"]),
@@ -100,7 +100,7 @@ All `transaction_id` values are strings (UInt64 serialized as decimal).
 ## File map
 
 ```
-ios-monetization-kit/
+MonetizationKit/
 ├── Sources/MonetizationKit/
 │   ├── MonetizationKit.swift              # Public facade
 │   ├── MonetizationDelegate.swift         # Protocol + errors + outcome

@@ -1,6 +1,6 @@
 # PROJECT_STATUS.md
 
-## Project: ios-monetization-kit
+## Project: MonetizationKit
 ## Type: Internal SDK (not an app)
 
 ---

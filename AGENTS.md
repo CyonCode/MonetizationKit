@@ -1,4 +1,4 @@
-# AGENTS.md — ios-monetization-kit
+# AGENTS.md — MonetizationKit
 
 ## Module boundaries
 
