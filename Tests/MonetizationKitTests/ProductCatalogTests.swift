@@ -4,6 +4,7 @@ import StoreKit
 @testable import MonetizationKit
 
 @Suite("ProductCatalog")
+@MainActor
 struct ProductCatalogTests {
 
     @Test("load calls loader with correct product IDs")

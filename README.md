@@ -15,7 +15,7 @@ Native StoreKit 2 subscription SDK for iOS. Handles product loading, purchase, r
 ```swift
 // Package.swift
 dependencies: [
-    .package(url: "https://github.com/CyonCode/MonetizationKit", from: "0.1.0"),
+    .package(url: "https://github.com/CyonCode/MonetizationKit", from: "0.2.0"),
 ],
 targets: [
     .target(name: "YourApp", dependencies: ["MonetizationKit"]),
@@ -26,15 +26,20 @@ targets: [
 
 ```swift
 import MonetizationKit
+import OSLog
 
-// At app launch
+let log = Logger(subsystem: "com.yourapp", category: "monetization")
+
+// At app launch (must run on the main actor; @main App.init is fine).
 MonetizationKit.shared.configure(
     productIDs: ["pro_monthly", "pro_yearly"],
-    appAccountTokenProvider: { UIDevice.current.identifierForVendor }
+    appAccountTokenProvider: { UIDevice.current.identifierForVendor },
+    requiresAppAccountToken: true  // fail fast if IDFV is nil instead of silently breaking attribution
 )
 MonetizationKit.shared.delegate = self
 MonetizationKit.shared.eventListener = { event in
-    print("[monetization] \(event.name) \(event.properties)")
+    log.info("\(event.name) \(String(describing: event.properties))")
+    // Forward to your analytics provider (PostHog/Mixpanel/Firebase/etc).
 }
 await MonetizationKit.shared.loadProducts()
 ```
@@ -52,11 +57,16 @@ AttributionKit.performAttributionIfNeeded()  →   Attribution.idfv = <IDFV>
                                                           ↕   (join key)
 MonetizationKit.configure(                               Revenue.appAccountToken
   appAccountTokenProvider: { UIDevice.current             = <IDFV>
-    .identifierForVendor }
+    .identifierForVendor },
+  requiresAppAccountToken: true
 )
 ```
 
 If these two values don't match, revenue events are still recorded but tagged `attribution_source = 'unknown'` and you lose LTV-by-source resolution.
+
+### `requiresAppAccountToken: true` (recommended)
+
+`UIDevice.current.identifierForVendor` can return `nil` (very early launch, restored-from-backup edge cases). With `requiresAppAccountToken: true` the SDK throws `MonetizationError.missingAppAccountToken` instead of letting the purchase reach Apple without the join key. Without that flag, missing-IDFV purchases proceed silently and become permanently unjoinable on the server.
 
 ### Server-side: Apple App Store Server Notifications V2
 
@@ -64,7 +74,7 @@ If these two values don't match, revenue events are still recorded but tagged `a
 POST /v1/webhook/appstore/<appId>
 ```
 
-Register this endpoint in App Store Connect → App → App Store Server Notifications. The server decodes the JWS-signed notification, extracts `originalTransactionId`, and upserts into the `revenues` collection.
+Register this endpoint in App Store Connect → App → App Store Server Notifications. The server decodes the JWS-signed notification, extracts `appAccountToken` (= IDFV) from the signed transaction info, and joins it to `Attribution.idfv`. Fall back to `originalTransactionId` for renewals after reinstall when IDFV has rotated.
 
 ---
 
@@ -95,7 +105,8 @@ All `transaction_id` values are strings (UInt64 serialized as decimal).
 - **Sandbox vs Production.** Transaction.environment distinguishes them. Filter sandbox out of LTV queries.
 - **Paywall is host responsibility.** MonetizationKit provides products and purchase API; the host app owns the paywall UI.
 - **No A/B testing.** Price testing is out of scope; use App Store pricing or a server-side experiment framework.
-- **SwiftUI support.** `EnvironmentValues.monetization` gives access to the shared instance.
+- **Main actor.** All public APIs are `@MainActor`-isolated. Call them from the main actor (SwiftUI views, `@main App.init`, or `Task { @MainActor in ... }`).
+- **Testing.** Inject `MockPurchaseClient` to drive purchase outcomes without StoreKit. See `Tests/MonetizationKitTests/Mocks/MockPurchaseClient.swift`.
 
 ## File map
 
@@ -109,12 +120,12 @@ MonetizationKit/
 │   ├── MonetizationEngine.swift           # Orchestrator
 │   ├── TransactionObserver.swift          # Background transaction listener
 │   ├── ProductCatalog.swift               # Product loading + cache
-│   ├── EnvironmentSupport.swift           # SwiftUI EnvironmentValues
 │   └── Internal/
 │       ├── MonetizationLog.swift          # OSLog wrapper
 │       ├── ProductLoading.swift           # Protocol + real impl
 │       ├── TransactionStreaming.swift     # Protocol + real impl
-│       └── AnyTransactionStream.swift     # Type erasure
+│       ├── AnyTransactionStream.swift     # Type erasure (multi-iteration safe)
+│       └── PurchaseClient.swift           # Protocol + real impl (mockable purchase)
 ├── Tests/MonetizationKitTests/
 │   ├── MonetizationEventTests.swift
 │   ├── MonetizationConfigTests.swift
@@ -122,9 +133,11 @@ MonetizationKit/
 │   ├── TransactionObserverTests.swift
 │   ├── MonetizationEngineTests.swift
 │   ├── MonetizationKitFacadeTests.swift
+│   ├── AnyAsyncSequenceTests.swift
 │   └── Mocks/
 │       ├── MockProductLoader.swift
-│       └── MockTransactionStream.swift
+│       ├── MockTransactionStream.swift
+│       └── MockPurchaseClient.swift
 ├── Examples/
 │   └── PaywallIntegration.swift
 ├── Package.swift

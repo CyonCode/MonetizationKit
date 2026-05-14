@@ -2,39 +2,43 @@ import Foundation
 import StoreKit
 
 @available(macOS 12.0, iOS 15.0, *)
-// `@unchecked Sendable`: held exclusively by `MonetizationKit` (`@MainActor`); all
-// mutating entry points are reached via that facade, so writes are main-thread serialized.
-// Migrate to `@MainActor` together with collaborators when adopting Swift 6 strict mode.
-final class MonetizationEngine: @unchecked Sendable {
+@MainActor
+final class MonetizationEngine {
     private let productCatalog: ProductCatalog
     private let observer: TransactionObserver<AnyTransactionStream>
+    private let purchaseClient: any PurchaseClient
     private var config: MonetizationConfig?
 
     var onEvent: ((MonetizationEvent) -> Void)?
     var onEntitlementsChange: ((Set<String>) -> Void)?
 
     var isConfigured: Bool { config != nil }
-    var isObserverListening: Bool { observer.activeEntitlements.count >= 0 }
     var products: [Product] { productCatalog.products }
     var activeEntitlements: Set<String> { observer.activeEntitlements }
     var isSubscribed: Bool { !activeEntitlements.isEmpty }
 
-    init(productLoader: any ProductLoading, transactionStream: any TransactionStreaming) {
+    init(
+        productLoader: any ProductLoading,
+        transactionStream: any TransactionStreaming,
+        purchaseClient: any PurchaseClient = RealPurchaseClient()
+    ) {
         self.productCatalog = ProductCatalog(productLoader: productLoader)
         self.observer = TransactionObserver(transactionStream: AnyTransactionStream(transactionStream))
+        self.purchaseClient = purchaseClient
 
-        observer.onEvent = { [weak self] event in
-            self?.onEvent?(event)
-        }
-        observer.onEntitlementsChange = { [weak self] entitlements in
-            self?.onEntitlementsChange?(entitlements)
-        }
+        observer.onEvent = { [weak self] event in self?.onEvent?(event) }
+        observer.onEntitlementsChange = { [weak self] entitlements in self?.onEntitlementsChange?(entitlements) }
     }
 
-    func configure(productIDs: [String], appAccountTokenProvider: (() -> UUID?)?) {
+    func configure(
+        productIDs: [String],
+        appAccountTokenProvider: (() -> UUID?)? = nil,
+        requiresAppAccountToken: Bool = false
+    ) {
         config = MonetizationConfig(
             productIDs: productIDs,
-            appAccountTokenProvider: appAccountTokenProvider
+            appAccountTokenProvider: appAccountTokenProvider,
+            requiresAppAccountToken: requiresAppAccountToken
         )
         observer.startListening()
         MonetizationLog.info("Engine configured with \(productIDs.count) product IDs")
@@ -45,41 +49,43 @@ final class MonetizationEngine: @unchecked Sendable {
         await productCatalog.load(productIDs: config.productIDs)
     }
 
-    func purchase(_ product: Product) async throws -> MonetizationPurchaseOutcome {
-        onEvent?(.purchaseInitiated(productID: product.id))
+    func purchase(productID: String) async throws -> MonetizationPurchaseOutcome {
+        onEvent?(.purchaseInitiated(productID: productID))
 
         var options: Set<Product.PurchaseOption> = []
-        if let uuid = config?.appAccountTokenProvider?() {
-            options.insert(.appAccountToken(uuid))
+        if let token = config?.appAccountTokenProvider?() {
+            options.insert(.appAccountToken(token))
+        } else if config?.requiresAppAccountToken == true {
+            let error = MonetizationError.missingAppAccountToken
+            onEvent?(.purchaseFailed(productID: productID, error: error))
+            throw error
         }
 
         do {
-            let result = try await product.purchase(options: options)
-
-            switch result {
-            case .success(let verification):
-                let transaction = try checkVerified(verification)
-                await transaction.finish()
+            let outcome = try await purchaseClient.purchase(
+                productID: productID,
+                options: options,
+                catalog: productCatalog
+            )
+            switch outcome {
+            case .success(let txID, let pID, let isTrial):
                 await refreshEntitlements()
-                onEvent?(.purchaseSuccess(
-                    productID: product.id,
-                    transactionID: transaction.id,
-                    isTrial: transaction.offerType == .introductory
-                ))
-                return .success(transactionID: transaction.id)
-
+                onEvent?(.purchaseSuccess(productID: pID, transactionID: txID, isTrial: isTrial))
+                return .success(transactionID: txID)
+            case .unverified(let error):
+                let wrapped = MonetizationError.purchaseVerificationFailed(underlying: error)
+                onEvent?(.purchaseFailed(productID: productID, error: wrapped))
+                throw wrapped
             case .userCancelled:
-                onEvent?(.purchaseCancelled(productID: product.id))
+                onEvent?(.purchaseCancelled(productID: productID))
                 return .userCancelled
-
             case .pending:
                 return .pending
-
-            @unknown default:
-                return .pending
             }
+        } catch let error as MonetizationError {
+            throw error
         } catch {
-            onEvent?(.purchaseFailed(productID: product.id, error: error))
+            onEvent?(.purchaseFailed(productID: productID, error: error))
             throw MonetizationError.purchaseVerificationFailed(underlying: error)
         }
     }
@@ -98,16 +104,5 @@ final class MonetizationEngine: @unchecked Sendable {
 
     func refreshEntitlements() async {
         await observer.refreshEntitlements()
-    }
-
-    private func checkVerified<T>(_ result: VerificationResult<T>) throws -> T {
-        switch result {
-        case .verified(let safe):
-            return safe
-        case .unverified:
-            throw MonetizationError.purchaseVerificationFailed(
-                underlying: NSError(domain: "MonetizationKit", code: -1)
-            )
-        }
     }
 }

@@ -18,10 +18,15 @@ public final class MonetizationKit {
         wireEngine()
     }
 
-    init(productLoader: any ProductLoading, transactionStream: any TransactionStreaming) {
+    init(
+        productLoader: any ProductLoading,
+        transactionStream: any TransactionStreaming,
+        purchaseClient: any PurchaseClient = RealPurchaseClient()
+    ) {
         engine = MonetizationEngine(
             productLoader: productLoader,
-            transactionStream: transactionStream
+            transactionStream: transactionStream,
+            purchaseClient: purchaseClient
         )
         wireEngine()
     }
@@ -38,11 +43,13 @@ public final class MonetizationKit {
 
     public func configure(
         productIDs: [String],
-        appAccountTokenProvider: (() -> UUID?)? = nil
+        appAccountTokenProvider: (() -> UUID?)? = nil,
+        requiresAppAccountToken: Bool = false
     ) {
         engine.configure(
             productIDs: productIDs,
-            appAccountTokenProvider: appAccountTokenProvider
+            appAccountTokenProvider: appAccountTokenProvider,
+            requiresAppAccountToken: requiresAppAccountToken
         )
     }
 
@@ -53,9 +60,12 @@ public final class MonetizationKit {
     @discardableResult
     public func purchase(_ product: Product) async throws -> MonetizationPurchaseOutcome {
         do {
-            return try await engine.purchase(product)
+            return try await engine.purchase(productID: product.id)
         } catch {
-            delegate?.monetization(self, didFailWith: error as? MonetizationError ?? .purchaseVerificationFailed(underlying: error))
+            delegate?.monetization(
+                self,
+                didFailWith: error as? MonetizationError ?? .purchaseVerificationFailed(underlying: error)
+            )
             throw error
         }
     }
@@ -64,7 +74,10 @@ public final class MonetizationKit {
         do {
             try await engine.restore()
         } catch {
-            delegate?.monetization(self, didFailWith: error as? MonetizationError ?? .purchaseVerificationFailed(underlying: error))
+            delegate?.monetization(
+                self,
+                didFailWith: error as? MonetizationError ?? .purchaseVerificationFailed(underlying: error)
+            )
             throw error
         }
     }
@@ -73,15 +86,7 @@ public final class MonetizationKit {
         await engine.refreshEntitlements()
     }
 
-    public var products: [Product] {
-        engine.products
-    }
-
-    public var activeEntitlements: Set<String> {
-        engine.activeEntitlements
-    }
-
-    public var isSubscribed: Bool {
-        engine.isSubscribed
-    }
+    public var products: [Product] { engine.products }
+    public var activeEntitlements: Set<String> { engine.activeEntitlements }
+    public var isSubscribed: Bool { engine.isSubscribed }
 }

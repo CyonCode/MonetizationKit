@@ -14,9 +14,17 @@ public enum MonetizationError: Error, Equatable {
     /// StoreKit is unavailable (e.g. managed devices, restricted).
     case storeKitUnavailable
 
+    /// `configure(requiresAppAccountToken: true)` was set but the provider
+    /// returned `nil` at purchase time. The purchase is aborted before
+    /// hitting StoreKit because the AttributionKit bridge would silently
+    /// drop the join key, producing an unjoinable revenue record.
+    case missingAppAccountToken
+
     public static func == (lhs: MonetizationError, rhs: MonetizationError) -> Bool {
         switch (lhs, rhs) {
         case (.storeKitUnavailable, .storeKitUnavailable):
+            return true
+        case (.missingAppAccountToken, .missingAppAccountToken):
             return true
         case let (.productsLoadFailed(l), .productsLoadFailed(r)):
             return (l as NSError) == (r as NSError)

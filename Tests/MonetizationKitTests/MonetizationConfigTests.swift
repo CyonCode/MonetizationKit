@@ -32,4 +32,19 @@ struct MonetizationConfigTests {
         let config = MonetizationConfig(productIDs: [])
         #expect(config.productIDs.isEmpty)
     }
+
+    @Test("requiresAppAccountToken defaults to false")
+    func defaultRequiresToken() {
+        let config = MonetizationConfig(productIDs: ["x"])
+        #expect(config.requiresAppAccountToken == false)
+    }
+
+    @Test("requiresAppAccountToken stores true")
+    func storesRequiresToken() {
+        let config = MonetizationConfig(
+            productIDs: ["x"],
+            requiresAppAccountToken: true
+        )
+        #expect(config.requiresAppAccountToken == true)
+    }
 }

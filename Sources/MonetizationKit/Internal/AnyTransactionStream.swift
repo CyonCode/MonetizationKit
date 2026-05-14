@@ -22,21 +22,23 @@ struct AnyTransactionStream: TransactionStreaming {
     }
 }
 
+/// Erases any `AsyncSequence` to a concrete type. Each call to
+/// `makeAsyncIterator()` returns a FRESH iterator — the wrapped sequence
+/// is captured (not its iterator), preventing the shared-state bug where
+/// repeated iteration would consume the same underlying iterator.
 @available(macOS 12.0, iOS 15.0, *)
 struct AnyAsyncSequence<Element>: AsyncSequence {
     private let _makeIterator: () -> AsyncIterator
 
     init<S: AsyncSequence>(_ wrapped: S) where S.Element == Element {
-        var wrappedIterator = wrapped.makeAsyncIterator()
         self._makeIterator = {
-            AsyncIterator {
-                try await wrappedIterator.next()
-            }
+            var iterator = wrapped.makeAsyncIterator()
+            return AsyncIterator { try await iterator.next() }
         }
     }
 
     struct AsyncIterator: AsyncIteratorProtocol {
-        private let _next: () async throws -> Element?
+        private var _next: () async throws -> Element?
 
         init(next: @escaping () async throws -> Element?) {
             self._next = next

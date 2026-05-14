@@ -4,6 +4,7 @@ import StoreKit
 @testable import MonetizationKit
 
 @Suite("TransactionObserver")
+@MainActor
 struct TransactionObserverTests {
 
     @Test("Initial entitlements are empty")
@@ -51,6 +52,5 @@ struct TransactionObserverTests {
         let observer = TransactionObserver(transactionStream: stream)
         observer.startListening()
         observer.stopListening()
-        // Should not crash or leak
     }
 }

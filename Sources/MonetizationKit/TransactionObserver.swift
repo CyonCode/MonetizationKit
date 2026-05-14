@@ -1,11 +1,8 @@
 import StoreKit
 
 @available(macOS 12.0, iOS 15.0, *)
-// `@unchecked Sendable`: state is mutated from the background `Task` started in
-// `startListening` AND from external `refreshEntitlements()` calls. Today both paths
-// converge on the same instance owned by a `@MainActor` facade, so observed races are
-// serialized in practice. Track in AGENTS.md to migrate to an `actor` under Swift 6.
-final class TransactionObserver<Stream: TransactionStreaming>: @unchecked Sendable {
+@MainActor
+final class TransactionObserver<Stream: TransactionStreaming> {
     private let transactionStream: Stream
     private var backgroundTask: Task<Void, Never>?
 
@@ -14,13 +11,11 @@ final class TransactionObserver<Stream: TransactionStreaming>: @unchecked Sendab
 
     private(set) var activeEntitlements: Set<String> = []
 
-    init(transactionStream: Stream) {
-        self.transactionStream = transactionStream
-    }
+    init(transactionStream: Stream) { self.transactionStream = transactionStream }
 
     func startListening() {
         backgroundTask?.cancel()
-        backgroundTask = Task { [weak self] in
+        backgroundTask = Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 for try await result in self.transactionStream.updates {
@@ -41,7 +36,6 @@ final class TransactionObserver<Stream: TransactionStreaming>: @unchecked Sendab
 
     func refreshEntitlements() async {
         var newEntitlements: Set<String> = []
-
         do {
             for try await result in transactionStream.currentEntitlements {
                 guard case .verified(let transaction) = result else { continue }
@@ -64,21 +58,13 @@ final class TransactionObserver<Stream: TransactionStreaming>: @unchecked Sendab
             MonetizationLog.error("Unverified transaction update ignored")
             return
         }
-
         await transaction.finish()
 
         if transaction.revocationDate != nil {
-            onEvent?(.subscriptionRevoked(
-                productID: transaction.productID,
-                reason: nil
-            ))
+            onEvent?(.subscriptionRevoked(productID: transaction.productID, reason: nil))
         } else {
-            onEvent?(.subscriptionRenewed(
-                productID: transaction.productID,
-                transactionID: transaction.id
-            ))
+            onEvent?(.subscriptionRenewed(productID: transaction.productID, transactionID: transaction.id))
         }
-
         await refreshEntitlements()
     }
 }
